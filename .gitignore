@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.vercel/
+.env*
+!.env.example
+.env.local
+public/event-qr.png
+npm-debug.log*
+*.tsbuildinfo
