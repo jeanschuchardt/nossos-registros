@@ -15,7 +15,7 @@ function clientValidation(file: File): string | null {
   return null;
 }
 
-export function UploadArea({ eventToken, maxFileSizeGb }: { eventToken: string; maxFileSizeGb: number }) {
+export function UploadArea({ eventSlug, maxFileSizeGb }: { eventSlug: string; maxFileSizeGb: number }) {
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [selectionError, setSelectionError] = useState("");
   const active = useRef(new Map<string, AbortController>());
@@ -30,7 +30,7 @@ export function UploadArea({ eventToken, maxFileSizeGb }: { eventToken: string; 
     active.current.set(entry.id, controller);
     update(entry.id, { status: "creating-session", error: undefined });
     try {
-      await uploadFileToDrive(entry.file, eventToken, controller.signal,
+      await uploadFileToDrive(entry.file, eventSlug, entry.id, controller.signal,
         (bytes) => update(entry.id, { uploadedBytes: bytes, progress: bytes / entry.file.size * 100, status: "uploading" }),
         () => update(entry.id, { status: "retrying" })
       );
@@ -39,7 +39,7 @@ export function UploadArea({ eventToken, maxFileSizeGb }: { eventToken: string; 
       if (controller.signal.aborted) update(entry.id, { status: "cancelled", error: "Upload cancelado." });
       else update(entry.id, { status: "failed", error: error instanceof Error ? error.message : "Falha inesperada." });
     } finally { active.current.delete(entry.id); }
-  }, [eventToken, update]);
+  }, [eventSlug, update]);
 
   useEffect(() => {
     const running = entries.filter((entry) => ["creating-session", "uploading", "retrying"].includes(entry.status)).length;

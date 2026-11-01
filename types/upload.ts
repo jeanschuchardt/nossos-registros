@@ -18,6 +18,9 @@ export interface UploadEntry {
 }
 
 export interface InitiateUploadResponse {
-  sessionUrl: string;
-  uploadName: string;
+  uploadId: string;
+  sessionUrl?: string;
+  uploadName?: string;
+  completed?: boolean;
+  awaitingConfirmation?: boolean;
 }

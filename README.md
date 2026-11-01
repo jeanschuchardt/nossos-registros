@@ -101,6 +101,17 @@ SESSION_RATE_LIMIT_PER_MINUTE=120
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
+Antes de iniciar o site, valide sem expor as credenciais se o refresh token pode ser
+renovado e se a pasta está acessível:
+
+```bash
+npm run check:google
+```
+
+Se o comando retornar `invalid_grant`, gere um novo refresh token. Em apps OAuth com
+status **Testing**, a autorização pode expirar em 7 dias; publique o app em
+**Production** e gere o token novamente para evitar essa expiração de teste.
+
 Gere o token com `openssl rand -hex 32`. Acesse `http://localhost:3000/upload?t=SEU_TOKEN`.
 
 ## QR Code

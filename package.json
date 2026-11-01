@@ -9,15 +9,22 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "db:migrate": "tsx --env-file=.env.local scripts/migrate.ts",
+    "db:check": "tsx --env-file=.env.local scripts/check-database.ts",
+    "db:check-uploads": "tsx --env-file=.env.local scripts/check-upload-schema.ts",
+    "db:create-event": "tsx --env-file=.env.local scripts/create-event.ts",
+    "check:google": "node --env-file=.env.local --experimental-strip-types scripts/check-google.ts",
     "qr": "tsx scripts/generate-qr.ts"
   },
   "dependencies": {
     "next": "^16.3.4",
+    "pg": "^8.23.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",

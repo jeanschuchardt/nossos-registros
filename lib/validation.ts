@@ -32,7 +32,7 @@ export function maxFileSizeBytes(): number {
   return configured * 1024 ** 3;
 }
 
-export function validateFileMetadata(value: unknown):
+export function validateFileMetadata(value: unknown, maximumBytes = maxFileSizeBytes()):
   | { ok: true; value: FileMetadata }
   | { ok: false; error: string } {
   if (!value || typeof value !== "object") return { ok: false, error: "Dados inválidos." };
@@ -45,7 +45,7 @@ export function validateFileMetadata(value: unknown):
   if (!filename || filename.length > 255 || !extension) {
     return { ok: false, error: "Nome ou extensão de arquivo não permitida." };
   }
-  if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > maxFileSizeBytes()) {
+  if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > maximumBytes) {
     return { ok: false, error: "Tamanho de arquivo inválido ou acima do limite." };
   }
   const expectedMime = MIME_BY_EXTENSION[extension];

@@ -14,7 +14,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
     <main className="shell">
       <section className="card">
         <header className="hero"><p className="eyebrow">Fran & Jean</p><h1>Compartilhe seus registros<br />do nosso casamento</h1><p>Adicione aqui as fotos e vídeos que você registrou durante esse dia.</p></header>
-        {valid ? <UploadArea eventToken={eventToken} maxFileSizeGb={maxFileSizeGb} /> : <div className="invalid"><h2>Link inválido</h2><p>Abra novamente o link do QR Code do casamento.</p></div>}
+        {valid ? <UploadArea eventSlug="casamento-fran-jean" maxFileSizeGb={maxFileSizeGb} /> : <div className="invalid"><h2>Link inválido</h2><p>Abra novamente o link do QR Code do casamento.</p></div>}
         {valid && (
           <footer className="page-footer">
             <a
