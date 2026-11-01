@@ -36,3 +36,10 @@ Para validar estados e capacidade dentro de uma transação que sempre é revert
 ```bash
 npm run db:check-uploads
 ```
+
+Para abrir ou fechar um evento sem editar dados diretamente:
+
+```bash
+npm run db:update-event -- --slug casamento-fran-jean --status active
+npm run db:update-event -- --slug casamento-fran-jean --status closed
+```

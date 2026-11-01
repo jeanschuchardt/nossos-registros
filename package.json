@@ -13,6 +13,7 @@
     "db:check": "tsx --env-file=.env.local scripts/check-database.ts",
     "db:check-uploads": "tsx --env-file=.env.local scripts/check-upload-schema.ts",
     "db:create-event": "tsx --env-file=.env.local scripts/create-event.ts",
+    "db:update-event": "tsx --env-file=.env.local scripts/update-event-status.ts",
     "check:google": "node --env-file=.env.local --experimental-strip-types scripts/check-google.ts",
     "qr": "tsx scripts/generate-qr.ts"
   },
