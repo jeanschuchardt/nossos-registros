@@ -1,16 +1,37 @@
-const MIME_BY_EXTENSION = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".heic": "image/heic",
-  ".heif": "image/heif",
-  ".mp4": "video/mp4",
-  ".mov": "video/quicktime"
-} as const;
+// Regras de arquivos da V1 (decisão de 03/11/2026). Compartilhado entre
+// navegador e servidor; o servidor é quem decide.
+const MB = 1024 ** 2;
+const GB = 1024 ** 3;
 
-export const ACCEPTED_FILE_TYPES = Object.values(MIME_BY_EXTENSION);
-export const ACCEPT_ATTRIBUTE = Object.keys(MIME_BY_EXTENSION).join(",");
+export const PHOTO_MAX_BYTES = 50 * MB;
+export const VIDEO_MAX_BYTES = 5 * GB;
+
+type Kind = "photo" | "video";
+
+interface FileRule {
+  kind: Kind;
+  /** MIME gravado no Drive e no banco. */
+  mime: string;
+  /** MIMEs que navegadores costumam informar para a extensão. */
+  accepted: readonly string[];
+}
+
+const RULES = {
+  ".jpg": { kind: "photo", mime: "image/jpeg", accepted: ["image/jpeg", "image/pjpeg"] },
+  ".jpeg": { kind: "photo", mime: "image/jpeg", accepted: ["image/jpeg", "image/pjpeg"] },
+  ".png": { kind: "photo", mime: "image/png", accepted: ["image/png"] },
+  ".webp": { kind: "photo", mime: "image/webp", accepted: ["image/webp"] },
+  ".heic": { kind: "photo", mime: "image/heic", accepted: ["image/heic", "image/heic-sequence"] },
+  ".heif": { kind: "photo", mime: "image/heif", accepted: ["image/heif", "image/heif-sequence"] },
+  ".mp4": { kind: "video", mime: "video/mp4", accepted: ["video/mp4"] },
+  ".mov": { kind: "video", mime: "video/quicktime", accepted: ["video/quicktime"] },
+  ".m4v": { kind: "video", mime: "video/x-m4v", accepted: ["video/x-m4v", "video/mp4"] }
+} as const satisfies Record<string, FileRule>;
+
+type Extension = keyof typeof RULES;
+
+export const ACCEPT_ATTRIBUTE = Object.keys(RULES).join(",");
+export const ACCEPTED_FORMATS_LABEL = "Fotos JPG, PNG, WebP e HEIC até 50 MB · Vídeos MP4, MOV e M4V até 5 GB";
 
 export interface FileMetadata {
   filename: string;
@@ -18,21 +39,20 @@ export interface FileMetadata {
   size: number;
 }
 
-function extensionOf(filename: string): keyof typeof MIME_BY_EXTENSION | undefined {
-  const match = filename.toLowerCase().match(/\.[a-z0-9]+$/);
-  const extension = match?.[0] as keyof typeof MIME_BY_EXTENSION | undefined;
-  return extension && extension in MIME_BY_EXTENSION ? extension : undefined;
+function extensionOf(filename: string): Extension | undefined {
+  const extension = filename.toLowerCase().match(/\.[a-z0-9]+$/)?.[0];
+  return extension && extension in RULES ? (extension as Extension) : undefined;
 }
 
-export function maxFileSizeBytes(): number {
-  const configured = Number(process.env.MAX_FILE_SIZE_GB);
-  if (!Number.isFinite(configured) || configured <= 0) {
-    throw new Error("MAX_FILE_SIZE_GB deve ser um número positivo.");
-  }
-  return configured * 1024 ** 3;
+function formatLimit(bytes: number): string {
+  return bytes >= GB ? `${Math.round(bytes / GB * 10) / 10} GB` : `${Math.round(bytes / MB)} MB`;
 }
 
-export function validateFileMetadata(value: unknown, maximumBytes = maxFileSizeBytes()):
+export function maxBytesFor(kind: Kind, eventMaxBytes = Number.POSITIVE_INFINITY): number {
+  return Math.min(kind === "photo" ? PHOTO_MAX_BYTES : VIDEO_MAX_BYTES, eventMaxBytes);
+}
+
+export function validateFileMetadata(value: unknown, eventMaxBytes = Number.POSITIVE_INFINITY):
   | { ok: true; value: FileMetadata }
   | { ok: false; error: string } {
   if (!value || typeof value !== "object") return { ok: false, error: "Dados inválidos." };
@@ -43,15 +63,20 @@ export function validateFileMetadata(value: unknown, maximumBytes = maxFileSizeB
   const extension = extensionOf(filename);
 
   if (!filename || filename.length > 255 || !extension) {
-    return { ok: false, error: "Nome ou extensão de arquivo não permitida." };
+    return { ok: false, error: `${filename || "Arquivo"}: formato não permitido.` };
   }
-  if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > maximumBytes) {
-    return { ok: false, error: "Tamanho de arquivo inválido ou acima do limite." };
+  const rule: FileRule = RULES[extension];
+  const limit = maxBytesFor(rule.kind, eventMaxBytes);
+  if (!Number.isSafeInteger(size) || (size as number) <= 0) {
+    return { ok: false, error: `${filename}: arquivo vazio ou inválido.` };
   }
-  const expectedMime = MIME_BY_EXTENSION[extension];
-  // iOS/Safari may omit MIME for HEIC/MOV. Normalize only known extensions.
-  if (mimeType && mimeType !== expectedMime) {
-    return { ok: false, error: "O tipo MIME não corresponde à extensão." };
+  if ((size as number) > limit) {
+    const label = rule.kind === "photo" ? "fotos" : "vídeos";
+    return { ok: false, error: `${filename}: ${label} podem ter até ${formatLimit(limit)}.` };
   }
-  return { ok: true, value: { filename, mimeType: expectedMime, size: size as number } };
+  // iOS/Safari pode omitir o MIME de HEIC/MOV; nesse caso vale a extensão.
+  if (mimeType && !rule.accepted.includes(mimeType)) {
+    return { ok: false, error: `${filename}: o tipo do arquivo não corresponde à extensão.` };
+  }
+  return { ok: true, value: { filename, mimeType: rule.mime, size: size as number } };
 }

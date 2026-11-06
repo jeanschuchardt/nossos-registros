@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Fran & Jean — Compartilhe seus registros",
-  description: "Envie as fotos e vídeos do nosso casamento.",
+  title: "Junto — Compartilhe seus registros",
+  description: "Envie as fotos e vídeos que você registrou no evento.",
   robots: { index: false, follow: false }
 };
 

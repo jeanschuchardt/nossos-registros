@@ -5,5 +5,6 @@ node_modules/
 !.env.example
 .env.local
 public/event-qr.png
+public/qr-*.png
 npm-debug.log*
 *.tsbuildinfo

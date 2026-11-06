@@ -21,6 +21,7 @@ const labels = {
 export function UploadItem({ entry, onRetry, onRemove }: { entry: UploadEntry; onRetry: () => void; onRemove: () => void }) {
   return (
     <article className="upload-item">
+      {/* eslint-disable-next-line @next/next/no-img-element -- miniatura local (blob:), fora do next/image */}
       {entry.previewUrl ? <img className="thumbnail" src={entry.previewUrl} alt="" /> : <div className="video-icon" aria-hidden>▶</div>}
       <div className="upload-info">
         <div className="file-line"><span className="filename" title={entry.filename}>{entry.filename}</span><span>{Math.round(entry.progress)}%</span></div>

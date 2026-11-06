@@ -1,41 +1,42 @@
-import pg from "pg";
+import { formatSaoPaulo, uploadWindowFor } from "../lib/event-window";
+import { databaseClient, parseArgs, run, UsageError } from "./lib/cli";
 
-const args = new Map<string, string>();
-for (let index = 2; index < process.argv.length; index += 2) {
-  const key = process.argv[index]?.replace(/^--/, "");
-  const value = process.argv[index + 1];
-  if (key && value) args.set(key, value);
-}
+const USAGE = `Uso:
+  npm run db:update-event -- --slug <slug> [--status draft|active|closed|archived] [--event-date AAAA-MM-DD]
+    --event-date recalcula a janela de envio (24 h antes até 7 dias depois).`;
 
-const connectionString = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
-const slug = args.get("slug");
-const status = args.get("status");
 const allowedStatuses = new Set(["draft", "active", "closed", "archived"]);
-
-if (!connectionString) throw new Error("Defina DATABASE_URL_UNPOOLED ou DATABASE_URL.");
-if (!slug) throw new Error("Use --slug <slug>.");
-if (!status || !allowedStatuses.has(status)) {
-  throw new Error("Use --status draft|active|closed|archived.");
-}
-
-const client = new pg.Client({ connectionString, application_name: "nossos-registros-update-event" });
+const args = parseArgs();
 
 async function updateEvent(): Promise<void> {
+  const slug = args.get("slug");
+  const status = args.get("status");
+  const eventDate = args.get("event-date");
+  if (!slug || (!status && !eventDate)) throw new UsageError(USAGE);
+  if (status && !allowedStatuses.has(status)) throw new UsageError(USAGE);
+  const window = eventDate ? uploadWindowFor(eventDate) : null;
+
+  const client = databaseClient("nossos-registros-update-event");
   await client.connect();
-  const result = await client.query<{ slug: string; status: string }>(`
-    UPDATE events
-    SET status = $2
-    WHERE slug = $1
-    RETURNING slug, status
-  `, [slug, status]);
-  const event = result.rows[0];
-  if (!event) throw new Error("Evento não encontrado.");
-  console.log(`OK: evento ${event.slug} atualizado para ${event.status}.`);
+  try {
+    const result = await client.query<{ slug: string; status: string; upload_starts_at: Date | null; upload_ends_at: Date | null }>(`
+      UPDATE events
+      SET status = COALESCE($2, status),
+        event_date = COALESCE($3::date, event_date),
+        upload_starts_at = CASE WHEN $3::date IS NULL THEN upload_starts_at ELSE $4 END,
+        upload_ends_at = CASE WHEN $3::date IS NULL THEN upload_ends_at ELSE $5 END
+      WHERE slug = $1
+      RETURNING slug, status, upload_starts_at, upload_ends_at
+    `, [slug, status ?? null, window?.eventDate ?? null, window?.startsAt ?? null, window?.endsAt ?? null]);
+    const event = result.rows[0];
+    if (!event) throw new UsageError("evento não encontrado.");
+    const range = event.upload_starts_at && event.upload_ends_at
+      ? `; envios de ${formatSaoPaulo(event.upload_starts_at)} até ${formatSaoPaulo(event.upload_ends_at)}`
+      : "; sem janela de envio definida";
+    console.log(`OK: evento ${event.slug} está ${event.status}${range}.`);
+  } finally {
+    await client.end();
+  }
 }
 
-updateEvent()
-  .catch((error: unknown) => {
-    console.error("ERRO: não foi possível atualizar o evento:", error instanceof Error ? error.message : "erro desconhecido");
-    process.exitCode = 1;
-  })
-  .finally(() => client.end());
+void run(updateEvent, "não foi possível atualizar o evento");

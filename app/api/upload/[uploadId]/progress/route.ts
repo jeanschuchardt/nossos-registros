@@ -1,31 +1,29 @@
-import { NextRequest, NextResponse } from "next/server";
-import { recordUploadProgress } from "@/lib/uploads";
+import { NextRequest } from "next/server";
+import { hasSameOrigin, json } from "@/lib/api";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { isValidUploadToken } from "@/lib/session-crypto";
+import { isUploadId, recordUploadProgress } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ uploadId: string }> }) {
-  const browserOrigin = request.headers.get("origin") ?? "";
-  if (!browserOrigin || browserOrigin !== request.nextUrl.origin) {
-    return NextResponse.json({ error: "Origem da requisição inválida." }, { status: 403 });
-  }
-  const eventSlug = request.headers.get("x-event-slug") ?? "";
+  if (!hasSameOrigin(request)) return json({ error: "Origem da requisição inválida." }, 403);
   const { uploadId } = await params;
+  if (!isUploadId(uploadId) || !isValidUploadToken(request.headers.get("x-upload-token"), uploadId)) {
+    return json({ error: "Upload não encontrado." }, 404);
+  }
+  if (!(await consumeRateLimit("progress", request))) return json({ error: "Muitas tentativas." }, 429);
+
   let body: { confirmedBytes?: unknown; state?: unknown } = {};
   try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+    return json({ error: "JSON inválido." }, 400);
   }
-  const confirmedBytes = body.confirmedBytes;
-  const state = body.state;
+  const { confirmedBytes, state } = body;
   if (!Number.isSafeInteger(confirmedBytes) || (confirmedBytes as number) < 0
     || (state !== "uploading" && state !== "retry_pending" && state !== "expired")) {
-    return NextResponse.json({ error: "Progresso inválido." }, { status: 400 });
+    return json({ error: "Progresso inválido." }, 400);
   }
-  const updated = await recordUploadProgress(
-    uploadId,
-    eventSlug,
-    confirmedBytes as number,
-    state as "uploading" | "retry_pending" | "expired"
-  );
-  if (!updated) return NextResponse.json({ error: "Upload não encontrado ou estado inválido." }, { status: 409 });
-  return NextResponse.json({ updated: true }, { headers: { "Cache-Control": "no-store" } });
+  const updated = await recordUploadProgress(uploadId, confirmedBytes as number, state);
+  if (!updated) return json({ error: "Upload não encontrado ou estado inválido." }, 409);
+  return json({ updated: true });
 }

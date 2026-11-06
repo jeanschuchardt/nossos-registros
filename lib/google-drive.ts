@@ -11,7 +11,11 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-async function getAccessToken(): Promise<string> {
+export class GoogleAuthError extends Error {}
+
+let cachedToken: { value: string; expiresAt: number } | null = null;
+
+async function requestAccessToken(): Promise<{ value: string; expiresAt: number }> {
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -23,10 +27,38 @@ async function getAccessToken(): Promise<string> {
     }),
     cache: "no-store"
   });
-  if (!response.ok) throw new Error(`Falha ao renovar token Google (${response.status}).`);
-  const json = (await response.json()) as { access_token?: string };
-  if (!json.access_token) throw new Error("Google não retornou um access token.");
-  return json.access_token;
+  const json = (await response.json().catch(() => ({}))) as {
+    access_token?: string; expires_in?: number; error?: string;
+  };
+  if (!response.ok || !json.access_token) {
+    // invalid_grant = refresh token revogado/expirado: exige ação manual, não adianta repetir.
+    const reason = json.error ?? `HTTP ${response.status}`;
+    if (reason === "invalid_grant") {
+      console.error("ALERTA: refresh token do Google inválido; gere um novo token (npm run check:google).");
+      throw new GoogleAuthError("Falha ao renovar token Google (invalid_grant).");
+    }
+    throw new Error(`Falha ao renovar token Google (${reason}).`);
+  }
+  const lifetimeMs = Math.max(60, json.expires_in ?? 3600) * 1000;
+  return { value: json.access_token, expiresAt: Date.now() + lifetimeMs };
+}
+
+async function getAccessToken(): Promise<string> {
+  // Reaproveita o token entre requisições na mesma instância, com 5 min de folga.
+  if (cachedToken && cachedToken.expiresAt - 5 * 60_000 > Date.now()) return cachedToken.value;
+  try {
+    cachedToken = await requestAccessToken();
+  } catch (error) {
+    if (error instanceof GoogleAuthError) throw error;
+    // Uma nova tentativa para falhas transitórias de rede ou 5xx do Google.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    cachedToken = await requestAccessToken();
+  }
+  return cachedToken.value;
+}
+
+function forgetTokenOn401(response: Response): void {
+  if (response.status === 401) cachedToken = null;
 }
 
 interface DriveFile {
@@ -63,6 +95,7 @@ export async function verifyDriveFile(fileId: string | undefined, expected: Expe
       `${DRIVE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}?fields=id,name,size,mimeType,parents,trashed`,
       { headers, cache: "no-store" }
     );
+    forgetTokenOn401(response);
     if (!response.ok) throw new Error(`Não foi possível verificar o arquivo no Drive (${response.status}).`);
     return assertDriveFile((await response.json()) as DriveFile, expected);
   }
@@ -73,6 +106,7 @@ export async function verifyDriveFile(fileId: string | undefined, expected: Expe
     `${DRIVE_FILES_ENDPOINT}?q=${encodeURIComponent(query)}&fields=files(id,name,size,mimeType,parents,trashed)&pageSize=2`,
     { headers, cache: "no-store" }
   );
+  forgetTokenOn401(response);
   if (!response.ok) throw new Error(`Não foi possível reconciliar o arquivo no Drive (${response.status}).`);
   const body = (await response.json()) as { files?: DriveFile[] };
   if (body.files?.length !== 1) throw new Error("O arquivo concluído ainda não foi localizado no Drive.");
@@ -94,6 +128,7 @@ export async function createResumableSession(metadata: FileMetadata, browserOrig
     body: JSON.stringify({ name: uploadName, parents: [driveFolderId] }),
     cache: "no-store"
   });
+  forgetTokenOn401(response);
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500);
     throw new Error(`Drive recusou a sessão (${response.status}): ${detail}`);

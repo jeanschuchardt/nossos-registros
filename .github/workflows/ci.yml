@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # O build só precisa que as variáveis existam; nada conecta ao banco ou ao Google.
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      UPLOAD_SESSION_ENCRYPTION_KEY: ci-only-key-with-at-least-32-characters
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Inclui testes de integração com Postgres em memória (PGlite): migrations, capacidade e estados.
+      - run: npm test
+      - run: npx next build
