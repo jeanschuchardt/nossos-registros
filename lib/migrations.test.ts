@@ -2,7 +2,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { applyMigrations, migrationFiles } from "../test/pglite";
 
-describe("migrations", () => {
+// Cada teste sobe um Postgres em WASM; sob carga isso passa dos 5 s padrão.
+describe("migrations", { timeout: 30_000 }, () => {
   it("0004 gera tokens distintos para eventos já existentes", async () => {
     const db = new PGlite();
     const files = migrationFiles();

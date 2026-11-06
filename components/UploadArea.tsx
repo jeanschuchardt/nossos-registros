@@ -9,10 +9,12 @@ import { matchesOriginalFile } from "@/lib/upload-recovery";
 import type { UploadEntry } from "@/types/upload";
 
 const CONCURRENCY = 2;
+const RUNNING = new Set<UploadEntry["status"]>(["creating-session", "uploading", "retrying"]);
 
 export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlug: string; eventKey: string; maxFileSizeBytes: number }) {
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [selectionError, setSelectionError] = useState("");
+  const [autoResumed, setAutoResumed] = useState(0);
   const active = useRef(new Map<string, AbortController>());
   const inputRef = useRef<HTMLInputElement>(null);
   const entriesRef = useRef(entries);
@@ -37,7 +39,10 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
       update(entry.id, { uploadedBytes: file.size, progress: 100, status: "completed" });
       void forgetUpload(entry.id);
     } catch (error) {
-      if (controller.signal.aborted) update(entry.id, { status: "cancelled", error: "Upload cancelado." });
+      if (controller.signal.aborted) {
+        update(entry.id, { status: "cancelled", error: "Envio cancelado." });
+        void forgetUpload(entry.id);
+      }
       else update(entry.id, { status: "failed", error: error instanceof Error ? error.message : "Falha inesperada." });
     } finally { active.current.delete(entry.id); }
   }, [access, update]);
@@ -46,25 +51,43 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
     let cancelled = false;
     void restoreUploads(eventSlug).then((stored) => {
       if (cancelled) return;
-      setEntries((current) => current.length ? current : stored.map((entry) => ({
+      if (entriesRef.current.length || !stored.length) return;
+      // Com cópia guardada, o envio volta para a fila sozinho; sem cópia, pede o arquivo.
+      setAutoResumed(stored.filter((entry) => entry.file).length);
+      const restored = stored.map((entry): UploadEntry => ({
         id: entry.id,
+        file: entry.file,
         filename: entry.filename,
         size: entry.size,
         mimeType: entry.mimeType,
         lastModified: entry.lastModified,
+        previewUrl: entry.file && entry.mimeType.startsWith("image/") ? URL.createObjectURL(entry.file) : undefined,
         progress: 0,
         uploadedBytes: 0,
-        status: "needs-file" as const
-      })));
+        status: entry.file ? "queued" : "needs-file"
+        }));
+      setEntries((current) => current.length ? current : restored);
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [eventSlug]);
 
   useEffect(() => {
-    const running = entries.filter((entry) => ["creating-session", "uploading", "retrying"].includes(entry.status)).length;
+    const running = entries.filter((entry) => RUNNING.has(entry.status)).length;
     const next = entries.filter((entry) => entry.status === "queued").slice(0, Math.max(0, CONCURRENCY - running));
     next.forEach((entry) => void runUpload(entry));
   }, [entries, runUpload]);
+
+  // Avisa antes de fechar a aba ou recarregar enquanto houver envio pendente.
+  const hasPendingWork = entries.some((entry) => entry.status === "queued" || RUNNING.has(entry.status));
+  useEffect(() => {
+    if (!hasPendingWork) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasPendingWork]);
 
   useEffect(() => {
     const controllers = active.current;
@@ -116,12 +139,18 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
     event.preventDefault();
     addFiles(Array.from(event.dataTransfer.files));
   };
-  const remove = (id: string) => setEntries((current) => {
-    const found = current.find((entry) => entry.id === id);
-    if (found?.previewUrl) URL.revokeObjectURL(found.previewUrl);
-    void forgetUpload(id);
-    return current.filter((entry) => entry.id !== id);
-  });
+  // Remove da tela e do IndexedDB; uploads em andamento nunca são removidos por aqui.
+  const removeWhere = (predicate: (entry: UploadEntry) => boolean) => setEntries((current) => current.filter((entry) => {
+    if (RUNNING.has(entry.status) || !predicate(entry)) return true;
+    if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+    void forgetUpload(entry.id);
+    return false;
+  }));
+  const remove = (id: string) => removeWhere((entry) => entry.id === id);
+  const cancel = (id: string) => active.current.get(id)?.abort();
+  const discardPending = () => removeWhere((entry) => entry.status === "needs-file");
+  const clearList = () => { removeWhere(() => true); setSelectionError(""); setAutoResumed(0); };
+  const pendingCount = entries.filter((entry) => entry.status === "needs-file").length;
   const retry = (id: string) => update(id, { status: "queued", progress: 0, uploadedBytes: 0, error: undefined });
   const allDone = useMemo(() => entries.length > 0 && entries.every((entry) => entry.status === "completed"), [entries]);
   const startOver = () => {
@@ -138,8 +167,26 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
         <small>{ACCEPTED_FORMATS_LABEL}</small>
         <small className="screen-warning">Para vídeos grandes, mantenha esta tela aberta e o celular desbloqueado.</small>
       </div>}
+      {pendingCount > 0 && (
+        <section className="resume-notice" role="status">
+          <p>
+            <strong>{pendingCount === 1 ? "1 envio não terminou." : `${pendingCount} envios não terminaram.`}</strong>{" "}
+            {autoResumed > 0 && `Retomamos ${autoResumed} automaticamente. `}
+            Para continuar de onde parou, selecione os mesmos arquivos de novo.
+          </p>
+          <div className="resume-actions">
+            <button type="button" className="text-button" onClick={() => inputRef.current?.click()}>Selecionar arquivos</button>
+            <button type="button" className="text-button muted" onClick={discardPending}>Descartar</button>
+          </div>
+        </section>
+      )}
+      {autoResumed > 0 && pendingCount === 0 && (
+        <p className="resume-notice" role="status">
+          {autoResumed === 1 ? "Retomamos 1 envio que não tinha terminado." : `Retomamos ${autoResumed} envios que não tinham terminado.`}
+        </p>
+      )}
       {selectionError && <p className="page-error" role="alert">{selectionError}</p>}
-      <UploadQueue entries={entries} onRetry={retry} onRemove={remove} />
+      <UploadQueue entries={entries} onRetry={retry} onRemove={remove} onCancel={cancel} onClear={clearList} />
       {allDone && <section className="success" aria-live="polite"><div className="check">✓</div><h2>Arquivos enviados!</h2><p>Obrigado por compartilhar<br />esse momento com a gente.</p><button className="primary-button" onClick={startOver}>Enviar mais fotos</button></section>}
     </>
   );

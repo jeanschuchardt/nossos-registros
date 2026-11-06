@@ -41,6 +41,11 @@ h1 { margin:0; color:var(--sage-dark); font-family:var(--display); font-weight:5
 .item-error,.page-error { color:var(--danger); font-size:.8rem; line-height:1.35; }
 .page-error { padding:11px 13px; background:#fbeae6; border-left:3px solid var(--terra); }
 .item-actions { display:flex; gap:15px; }
+.queue-header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.queue-header .text-button { padding-top:0; white-space:nowrap; }
+.resume-notice { margin-top:20px; padding:14px 16px; border-left:3px solid var(--sage); background:var(--sage-soft); font-size:.88rem; line-height:1.45; }
+.resume-notice p { margin:0; }
+.resume-actions { display:flex; flex-wrap:wrap; gap:18px; margin-top:6px; }
 .text-button { padding:8px 0 0; border:0; border-bottom:1px solid var(--terra); background:none; color:var(--terra-dark); cursor:pointer; font-size:.8rem; }
 .text-button.muted { color:var(--muted); }
 .overall { margin-top:22px; padding:18px; border-left:3px solid var(--sage); background:var(--sage-soft); }

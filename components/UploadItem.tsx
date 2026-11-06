@@ -18,7 +18,11 @@ const labels = {
   cancelled: "Cancelado"
 };
 
-export function UploadItem({ entry, onRetry, onRemove }: { entry: UploadEntry; onRetry: () => void; onRemove: () => void }) {
+const RUNNING = new Set(["creating-session", "uploading", "retrying"]);
+
+export function UploadItem({ entry, onRetry, onRemove, onCancel }: {
+  entry: UploadEntry; onRetry: () => void; onRemove: () => void; onCancel: () => void;
+}) {
   return (
     <article className="upload-item">
       {/* eslint-disable-next-line @next/next/no-img-element -- miniatura local (blob:), fora do next/image */}
@@ -29,8 +33,9 @@ export function UploadItem({ entry, onRetry, onRemove }: { entry: UploadEntry; o
         <ProgressBar value={entry.progress} />
         {entry.error && <p className="item-error" role="alert">{entry.error}</p>}
         <div className="item-actions">
-          {entry.status === "failed" && <button type="button" className="text-button" onClick={onRetry}>Tentar novamente</button>}
-          {(entry.status === "queued" || entry.status === "failed" || entry.status === "needs-file") && <button type="button" className="text-button muted" onClick={onRemove}>Remover</button>}
+          {(entry.status === "failed" || entry.status === "cancelled") && entry.file && <button type="button" className="text-button" onClick={onRetry}>Tentar novamente</button>}
+          {RUNNING.has(entry.status) && <button type="button" className="text-button muted" onClick={onCancel}>Cancelar</button>}
+          {(entry.status === "queued" || entry.status === "failed" || entry.status === "needs-file" || entry.status === "cancelled") && <button type="button" className="text-button muted" onClick={onRemove}>Remover</button>}
         </div>
       </div>
     </article>

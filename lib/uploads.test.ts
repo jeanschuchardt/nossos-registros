@@ -59,7 +59,7 @@ async function startSession(event: EventRecord, size: number, key = randomUUID()
 beforeAll(() => { process.env.UPLOAD_SESSION_ENCRYPTION_KEY = "k".repeat(40); });
 beforeEach(() => { delete process.env.UPLOAD_ABANDONED_TIMEOUT_MS; });
 
-describe("prepareUpload", () => {
+describe("prepareUpload", { timeout: 30_000 }, () => {
   it("cria, bloqueia preparação concorrente e retoma a sessão salva", async () => {
     const event = await createEvent();
     const key = randomUUID();
