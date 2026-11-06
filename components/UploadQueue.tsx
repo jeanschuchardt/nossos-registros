@@ -6,6 +6,7 @@ export function UploadQueue({ entries, onRetry, onRemove }: { entries: UploadEnt
   if (!entries.length) return null;
   const completed = entries.filter((entry) => entry.status === "completed").length;
   const overall = entries.reduce((sum, entry) => sum + entry.progress, 0) / entries.length;
+  const needsFile = entries.some((entry) => entry.status === "needs-file");
   return (
     <section className="queue" aria-label="Arquivos selecionados">
       <h2>Arquivos selecionados</h2>
@@ -15,7 +16,7 @@ export function UploadQueue({ entries, onRetry, onRemove }: { entries: UploadEnt
       <div className="overall">
         <div className="file-line"><strong>Progresso geral</strong><span>{Math.round(overall)}%</span></div>
         <ProgressBar value={overall} />
-        <p>{completed === entries.length ? `${completed} de ${entries.length} enviados` : `Enviando ${completed + 1} de ${entries.length}`}</p>
+        <p>{needsFile ? "Selecione novamente os arquivos indicados para retomar." : completed === entries.length ? `${completed} de ${entries.length} enviados` : `Enviando ${Math.min(completed + 1, entries.length)} de ${entries.length}`}</p>
       </div>
     </section>
   );

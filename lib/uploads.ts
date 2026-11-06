@@ -4,6 +4,7 @@ import { database } from "@/lib/db";
 import type { EventRecord } from "@/lib/events";
 import type { FileMetadata } from "@/lib/validation";
 import { decryptSessionUrl, encryptSessionUrl } from "@/lib/session-crypto";
+import { isPreparationStale, isSessionUsable } from "@/lib/upload-recovery";
 
 export class UploadConflictError extends Error {}
 export class UploadPreparationPendingError extends Error {}
@@ -19,6 +20,8 @@ interface UploadRow {
   status: string;
   drive_file_id: string | null;
   session_url_ciphertext: string | null;
+  session_expires_at: Date | null;
+  updated_at: Date;
 }
 
 export interface UploadForConfirmation {
@@ -48,7 +51,7 @@ function metadataMatches(row: UploadRow, metadata: FileMetadata): boolean {
 async function selectUpload(client: PoolClient, eventId: string, idempotencyKey: string): Promise<UploadRow | null> {
   const result = await client.query<UploadRow>(`
     SELECT id, event_id, idempotency_key, original_filename, drive_filename, mime_type,
-      size_bytes, status, drive_file_id, session_url_ciphertext
+      size_bytes, status, drive_file_id, session_url_ciphertext, session_expires_at, updated_at
     FROM uploads
     WHERE event_id = $1 AND idempotency_key = $2
     FOR UPDATE
@@ -69,7 +72,8 @@ export async function prepareUpload(event: EventRecord, metadata: FileMetadata, 
           status, attempt_count
         ) VALUES ($1, $2, $3, $4, $5, 'creating_session', 1)
         RETURNING id, event_id, idempotency_key, original_filename, drive_filename,
-          mime_type, size_bytes, status, drive_file_id, session_url_ciphertext
+          mime_type, size_bytes, status, drive_file_id, session_url_ciphertext,
+          session_expires_at, updated_at
       `, [event.id, idempotencyKey, metadata.filename, metadata.mimeType, metadata.size]);
       upload = inserted.rows[0];
       await client.query("COMMIT");
@@ -87,21 +91,27 @@ export async function prepareUpload(event: EventRecord, metadata: FileMetadata, 
       await client.query("COMMIT");
       return { kind: "confirm", uploadId: upload.id };
     }
+    const now = new Date();
     if (upload.session_url_ciphertext && upload.drive_filename
+      && isSessionUsable(upload.session_expires_at, now)
       && ["session_created", "uploading", "retry_pending"].includes(upload.status)) {
       const sessionUrl = decryptSessionUrl(upload.session_url_ciphertext);
       await client.query("COMMIT");
       return { kind: "resume", uploadId: upload.id, sessionUrl, uploadName: upload.drive_filename };
     }
     if (upload.status === "creating_session") {
-      throw new UploadPreparationPendingError("A sessão deste upload ainda está sendo preparada.");
+      const staleAfterMs = Math.max(30_000, Number(process.env.UPLOAD_PREPARATION_TIMEOUT_MS ?? "120000") || 120_000);
+      if (!isPreparationStale(upload.updated_at, now, staleAfterMs)) {
+        throw new UploadPreparationPendingError("A sessão deste upload ainda está sendo preparada.");
+      }
     }
 
     const claimed = await client.query(`
       UPDATE uploads
       SET status = 'creating_session', attempt_count = attempt_count + 1,
         last_error_code = NULL, last_error_message = NULL,
-        session_url_ciphertext = NULL, session_expires_at = NULL
+        session_url_ciphertext = NULL, session_expires_at = NULL,
+        confirmed_bytes = 0
       WHERE id = $1
     `, [upload.id]);
     if (claimed.rowCount !== 1) throw new UploadConflictError("Não foi possível reiniciar o upload.");
@@ -167,6 +177,35 @@ export async function markAwaitingConfirmation(uploadId: string): Promise<void> 
     SET status = 'awaiting_confirmation'
     WHERE id = $1 AND status IN ('session_created', 'uploading', 'retry_pending', 'awaiting_confirmation')
   `, [uploadId]);
+}
+
+export async function recordUploadProgress(
+  uploadId: string,
+  eventSlug: string,
+  confirmedBytes: number,
+  state: "uploading" | "retry_pending" | "expired"
+): Promise<boolean> {
+  const result = await database.query(`
+    UPDATE uploads u
+    SET status = $4, confirmed_bytes = GREATEST(u.confirmed_bytes, $3),
+      session_url_ciphertext = CASE WHEN $4 = 'expired' THEN NULL ELSE session_url_ciphertext END,
+      session_expires_at = CASE WHEN $4 = 'expired' THEN NULL ELSE session_expires_at END,
+      last_error_code = CASE
+        WHEN $4 = 'retry_pending' THEN 'network_retry'
+        WHEN $4 = 'expired' THEN 'drive_session_expired'
+        ELSE NULL
+      END,
+      last_error_message = CASE
+        WHEN $4 = 'retry_pending' THEN 'Aguardando nova tentativa do navegador.'
+        WHEN $4 = 'expired' THEN 'A sessão resumível do Google Drive expirou.'
+        ELSE NULL
+      END
+    FROM events e
+    WHERE u.id = $1 AND u.event_id = e.id AND e.slug = $2
+      AND u.status IN ('session_created', 'uploading', 'retry_pending', 'expired')
+      AND $3 >= 0 AND $3 <= u.size_bytes
+  `, [uploadId, eventSlug, confirmedBytes, state]);
+  return result.rowCount === 1;
 }
 
 export async function completeUpload(uploadId: string, driveFileId: string): Promise<void> {

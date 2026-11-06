@@ -1,8 +1,9 @@
+import pg from "pg";
+
 const required = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
-  "GOOGLE_REFRESH_TOKEN",
-  "GOOGLE_DRIVE_FOLDER_ID"
+  "GOOGLE_REFRESH_TOKEN"
 ] as const;
 
 for (const name of required) {
@@ -13,6 +14,21 @@ for (const name of required) {
 }
 
 async function checkGoogle(): Promise<void> {
+const slugIndex = process.argv.indexOf("--slug");
+const slug = slugIndex >= 0 ? process.argv[slugIndex + 1] : undefined;
+if (!slug) throw new Error("Use --slug <slug-do-evento>.");
+const connectionString = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+if (!connectionString) throw new Error("Defina DATABASE_URL_UNPOOLED ou DATABASE_URL.");
+const client = new pg.Client({ connectionString, application_name: "nossos-registros-check-google" });
+await client.connect();
+const eventResult = await client.query<{ drive_folder_id: string }>(
+  "SELECT drive_folder_id FROM events WHERE slug = $1",
+  [slug]
+);
+await client.end();
+const event = eventResult.rows[0];
+if (!event) throw new Error("Evento não encontrado.");
+
 const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
   method: "POST",
   headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -41,7 +57,7 @@ if (!tokenResponse.ok || !tokenBody.access_token) {
 
 console.log("OK: refresh token válido; access token renovado.");
 
-const folderId = encodeURIComponent(process.env.GOOGLE_DRIVE_FOLDER_ID!);
+const folderId = encodeURIComponent(event.drive_folder_id);
 const folderResponse = await fetch(
   `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,trashed&supportsAllDrives=true`,
   { headers: { Authorization: `Bearer ${tokenBody.access_token}` } }
@@ -58,7 +74,7 @@ if (!folderResponse.ok) {
   process.exit(1);
 }
 if (folderBody.mimeType !== "application/vnd.google-apps.folder" || folderBody.trashed) {
-  console.error("ERRO: GOOGLE_DRIVE_FOLDER_ID não aponta para uma pasta ativa.");
+  console.error("ERRO: a pasta configurada para o evento não está ativa.");
   process.exit(1);
 }
 

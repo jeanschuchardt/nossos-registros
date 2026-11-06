@@ -17,11 +17,11 @@ async function checkDatabase(): Promise<void> {
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'
-      AND c.relname IN ('events', 'uploads', 'event_storage_usage', 'schema_migrations')
+      AND c.relname IN ('events', 'uploads', 'event_storage_usage', 'schema_migrations', 'rate_limit_windows')
     ORDER BY c.relname
   `);
 
-  const expected = new Set(["events", "uploads", "event_storage_usage", "schema_migrations"]);
+  const expected = new Set(["events", "uploads", "event_storage_usage", "schema_migrations", "rate_limit_windows"]);
   for (const relation of relations.rows) expected.delete(relation.name);
   if (expected.size) throw new Error(`Estruturas ausentes: ${[...expected].join(", ")}.`);
 

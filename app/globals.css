@@ -35,6 +35,7 @@ h1 { margin:0; color:var(--sage-dark); font-family:var(--display); font-weight:5
 .file-meta { margin:4px 0 8px; color:var(--muted); font-size:.76rem; }
 .status-completed { color:var(--sage-dark); }
 .status-failed { color:var(--danger); }
+.status-needs-file { color:var(--terra-dark); }
 .progress-track { width:100%; height:6px; overflow:hidden; background:#e1e7de; }
 .progress-fill { height:100%; background:var(--sage); transition:width .15s linear; }
 .item-error,.page-error { color:var(--danger); font-size:.8rem; line-height:1.35; }

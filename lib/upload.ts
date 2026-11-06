@@ -85,6 +85,25 @@ async function confirmUpload(uploadId: string, eventSlug: string, driveFileId: s
   }
 }
 
+async function syncProgress(
+  uploadId: string,
+  eventSlug: string,
+  confirmedBytes: number,
+  state: "uploading" | "retry_pending" | "expired",
+  signal: AbortSignal
+): Promise<void> {
+  try {
+    await fetch(`/api/upload/${encodeURIComponent(uploadId)}/progress`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-Event-Slug": eventSlug },
+      body: JSON.stringify({ confirmedBytes, state }),
+      signal
+    });
+  } catch {
+    // O Drive continua sendo a fonte do offset; a telemetria não bloqueia o arquivo.
+  }
+}
+
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(resolve, ms);
@@ -108,8 +127,24 @@ export async function uploadFileToDrive(
     return;
   }
   const sessionUrl = prepared.sessionUrl!;
-  let offset = 0;
+  let initial: { offset: number; driveFileId?: string };
+  try {
+    initial = await queryOffset(sessionUrl, file.size, signal);
+  } catch (error) {
+    if (error instanceof UploadError && /expirou/.test(error.message)) {
+      await syncProgress(prepared.uploadId, eventSlug, 0, "expired", signal);
+    }
+    throw error;
+  }
+  let offset = initial.offset;
   let retries = 0;
+  onProgress(offset);
+  if (offset === file.size) {
+    await confirmUpload(prepared.uploadId, eventSlug, initial.driveFileId, signal);
+    onProgress(file.size);
+    return;
+  }
+  await syncProgress(prepared.uploadId, eventSlug, offset, "uploading", signal);
 
   while (offset < file.size) {
     try {
@@ -124,6 +159,7 @@ export async function uploadFileToDrive(
         const confirmed = result.range?.match(/bytes=0-(\d+)/);
         offset = confirmed ? Number(confirmed[1]) + 1 : Math.min(offset + CHUNK_SIZE, file.size);
         onProgress(offset);
+        await syncProgress(prepared.uploadId, eventSlug, offset, "uploading", signal);
         retries = 0;
         continue;
       }
@@ -132,15 +168,21 @@ export async function uploadFileToDrive(
       throw new UploadError(`Falha temporária (${result.status}).`);
     } catch (error) {
       if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
-      if (error instanceof UploadError && /expirou|recusado/.test(error.message)) throw error;
+      if (error instanceof UploadError && /expirou/.test(error.message)) {
+        await syncProgress(prepared.uploadId, eventSlug, offset, "expired", signal);
+        throw error;
+      }
+      if (error instanceof UploadError && /recusado/.test(error.message)) throw error;
       if (retries >= MAX_RETRIES) throw new UploadError("A conexão continuou instável. Toque em tentar novamente.");
       retries += 1;
       onRetry();
+      await syncProgress(prepared.uploadId, eventSlug, offset, "retry_pending", signal);
       await delay(Math.min(1000 * 2 ** (retries - 1), 16_000) + Math.random() * 500, signal);
       try {
         const recovered = await queryOffset(sessionUrl, file.size, signal);
         offset = recovered.offset;
         onProgress(offset);
+        await syncProgress(prepared.uploadId, eventSlug, offset, "uploading", signal);
         if (offset === file.size) {
           await confirmUpload(prepared.uploadId, eventSlug, recovered.driveFileId, signal);
           onProgress(file.size);

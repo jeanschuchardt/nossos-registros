@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   }
 
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  if (!allowSessionCreation(ip)) {
+  if (!(await allowSessionCreation(ip))) {
     return NextResponse.json({ error: "Muitas tentativas. Aguarde um minuto." }, { status: 429 });
   }
 

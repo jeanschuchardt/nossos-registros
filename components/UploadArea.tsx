@@ -4,6 +4,8 @@ import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { UploadQueue } from "@/components/UploadQueue";
 import { uploadFileToDrive } from "@/lib/upload";
 import { ACCEPT_ATTRIBUTE } from "@/lib/validation";
+import { forgetUpload, rememberUpload, restoreUploads } from "@/lib/upload-queue-store";
+import { matchesOriginalFile } from "@/lib/upload-recovery";
 import type { UploadEntry } from "@/types/upload";
 
 const CONCURRENCY = 2;
@@ -26,20 +28,41 @@ export function UploadArea({ eventSlug, maxFileSizeGb }: { eventSlug: string; ma
   }, []);
 
   const runUpload = useCallback(async (entry: UploadEntry) => {
+    if (!entry.file) return;
+    const file = entry.file;
     const controller = new AbortController();
     active.current.set(entry.id, controller);
     update(entry.id, { status: "creating-session", error: undefined });
     try {
-      await uploadFileToDrive(entry.file, eventSlug, entry.id, controller.signal,
-        (bytes) => update(entry.id, { uploadedBytes: bytes, progress: bytes / entry.file.size * 100, status: "uploading" }),
+      await uploadFileToDrive(file, eventSlug, entry.id, controller.signal,
+        (bytes) => update(entry.id, { uploadedBytes: bytes, progress: bytes / file.size * 100, status: "uploading" }),
         () => update(entry.id, { status: "retrying" })
       );
-      update(entry.id, { uploadedBytes: entry.file.size, progress: 100, status: "completed" });
+      update(entry.id, { uploadedBytes: file.size, progress: 100, status: "completed" });
+      void forgetUpload(entry.id);
     } catch (error) {
       if (controller.signal.aborted) update(entry.id, { status: "cancelled", error: "Upload cancelado." });
       else update(entry.id, { status: "failed", error: error instanceof Error ? error.message : "Falha inesperada." });
     } finally { active.current.delete(entry.id); }
   }, [eventSlug, update]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void restoreUploads(eventSlug).then((stored) => {
+      if (cancelled) return;
+      setEntries((current) => current.length ? current : stored.map((entry) => ({
+        id: entry.id,
+        filename: entry.filename,
+        size: entry.size,
+        mimeType: entry.mimeType,
+        lastModified: entry.lastModified,
+        progress: 0,
+        uploadedBytes: 0,
+        status: "needs-file" as const
+      })));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [eventSlug]);
 
   useEffect(() => {
     const running = entries.filter((entry) => ["creating-session", "uploading", "retrying"].includes(entry.status)).length;
@@ -62,10 +85,29 @@ export function UploadArea({ eventSlug, maxFileSizeGb }: { eventSlug: string; ma
     const errors = files.map(validate).filter(Boolean);
     const valid = files.filter((file) => !validate(file));
     setSelectionError(errors.join(" "));
-    setEntries((current) => [...current, ...valid.map((file) => ({
-      id: crypto.randomUUID(), file, progress: 0, uploadedBytes: 0, status: "queued" as const,
-      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
-    }))]);
+    setEntries((current) => {
+      const next = [...current];
+      for (const file of valid) {
+        const restoredIndex = next.findIndex((entry) => entry.status === "needs-file"
+          && matchesOriginalFile(entry, file));
+        if (restoredIndex >= 0) {
+          next[restoredIndex] = {
+            ...next[restoredIndex], file, mimeType: file.type, status: "queued", error: undefined,
+            previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
+          };
+          continue;
+        }
+        const entry: UploadEntry = {
+          id: crypto.randomUUID(), file, filename: file.name, size: file.size,
+          mimeType: file.type, lastModified: file.lastModified,
+          progress: 0, uploadedBytes: 0, status: "queued",
+          previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
+        };
+        next.push(entry);
+        void rememberUpload(entry, eventSlug);
+      }
+      return next;
+    });
   };
 
   const handleInput = (event: ChangeEvent<HTMLInputElement>) => {
@@ -79,6 +121,7 @@ export function UploadArea({ eventSlug, maxFileSizeGb }: { eventSlug: string; ma
   const remove = (id: string) => setEntries((current) => {
     const found = current.find((entry) => entry.id === id);
     if (found?.previewUrl) URL.revokeObjectURL(found.previewUrl);
+    void forgetUpload(id);
     return current.filter((entry) => entry.id !== id);
   });
   const retry = (id: string) => update(id, { status: "queued", progress: 0, uploadedBytes: 0, error: undefined });
