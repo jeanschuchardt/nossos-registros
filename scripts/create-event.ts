@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { formatSaoPaulo, uploadWindowFor } from "../lib/event-window";
 import { databaseClient, eventUrl, parseArgs, run, UsageError } from "./lib/cli";
+import { saveCover } from "./lib/cover";
 import { assertDriveFolder, createDriveFolder, googleAccessToken } from "./lib/google";
 
 const USAGE = `Uso:
@@ -8,6 +9,7 @@ const USAGE = `Uso:
     [--folder-id <id>]          pasta já existente (padrão: cria uma pasta nova pelo app)
     [--parent-folder-id <id>]   onde criar a pasta (padrão: GOOGLE_DRIVE_PARENT_FOLDER_ID ou raiz)
     [--capacity-gb 100]
+    [--cover foto.jpg]          capa escolhida pelo contratante (padrão: capa neutra)
     [--active]                  já cria como active (padrão: draft)`;
 
 const args = parseArgs();
@@ -57,6 +59,8 @@ async function createEvent(): Promise<void> {
     ]);
     const event = result.rows[0];
     console.log(`OK: evento ${slug} criado como ${status} (${event.id}).`);
+    const coverPath = args.get("cover");
+    if (coverPath) console.log(`OK: capa definida (${await saveCover(client, event.id, coverPath)}).`);
     console.log(`    Envios: ${formatSaoPaulo(window.startsAt)} até ${formatSaoPaulo(window.endsAt)} (horário de Brasília).`);
     console.log(`    Link:   ${eventUrl(slug, event.access_token)}`);
     if (status === "draft") console.log(`    Ativar: npm run db:update-event -- --slug ${slug} --status active`);

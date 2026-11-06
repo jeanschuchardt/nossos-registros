@@ -1,9 +1,11 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { EventCover } from "@/components/EventCover";
 import { UploadQueue } from "@/components/UploadQueue";
+import type { EventDisplay } from "@/lib/event-display";
 import { uploadFileToDrive, type EventAccess } from "@/lib/upload";
-import { ACCEPT_ATTRIBUTE, ACCEPTED_FORMATS_LABEL, validateFileMetadata } from "@/lib/validation";
+import { ACCEPT_ATTRIBUTE, validateFileMetadata } from "@/lib/validation";
 import { forgetUpload, rememberUpload, restoreUploads } from "@/lib/upload-queue-store";
 import { matchesOriginalFile } from "@/lib/upload-recovery";
 import type { UploadEntry } from "@/types/upload";
@@ -11,7 +13,8 @@ import type { UploadEntry } from "@/types/upload";
 const CONCURRENCY = 2;
 const RUNNING = new Set<UploadEntry["status"]>(["creating-session", "uploading", "retrying"]);
 
-export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlug: string; eventKey: string; maxFileSizeBytes: number }) {
+export function UploadArea({ event }: { event: EventDisplay }) {
+  const { slug: eventSlug, accessKey: eventKey, maxFileSizeBytes } = event;
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [selectionError, setSelectionError] = useState("");
   const [autoResumed, setAutoResumed] = useState(0);
@@ -135,10 +138,12 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
     addFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    addFiles(Array.from(event.dataTransfer.files));
+  // No computador, arquivos podem ser soltos em qualquer ponto da página.
+  const handleDrop = (dropEvent: DragEvent<HTMLElement>) => {
+    dropEvent.preventDefault();
+    addFiles(Array.from(dropEvent.dataTransfer.files));
   };
+  const chooseFiles = () => inputRef.current?.click();
   // Remove da tela e do IndexedDB; uploads em andamento nunca são removidos por aqui.
   const removeWhere = (predicate: (entry: UploadEntry) => boolean) => setEntries((current) => current.filter((entry) => {
     if (RUNNING.has(entry.status) || !predicate(entry)) return true;
@@ -158,36 +163,78 @@ export function UploadArea({ eventSlug, eventKey, maxFileSizeBytes }: { eventSlu
     setEntries([]); setSelectionError("");
   };
 
-  return (
+  const cover = { name: event.name, dateLabel: event.dateLabel, coverUrl: event.coverUrl };
+  const input = <input ref={inputRef} className="sr-only" id="files" type="file" multiple accept={ACCEPT_ATTRIBUTE} onChange={handleInput} />;
+  const notices = (
     <>
-      {!allDone && <div className="drop-zone" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
-        <input ref={inputRef} className="sr-only" id="files" type="file" multiple accept={ACCEPT_ATTRIBUTE} onChange={handleInput} />
-        <button className="primary-button" type="button" onClick={() => inputRef.current?.click()}>Adicionar fotos e vídeos</button>
-        <p>ou arraste aqui</p>
-        <small>{ACCEPTED_FORMATS_LABEL}</small>
-        <small className="screen-warning">Para vídeos grandes, mantenha esta tela aberta e o celular desbloqueado.</small>
-      </div>}
       {pendingCount > 0 && (
-        <section className="resume-notice" role="status">
+        <section className="notice" role="status">
           <p>
             <strong>{pendingCount === 1 ? "1 envio não terminou." : `${pendingCount} envios não terminaram.`}</strong>{" "}
             {autoResumed > 0 && `Retomamos ${autoResumed} automaticamente. `}
             Para continuar de onde parou, selecione os mesmos arquivos de novo.
           </p>
-          <div className="resume-actions">
-            <button type="button" className="text-button" onClick={() => inputRef.current?.click()}>Selecionar arquivos</button>
-            <button type="button" className="text-button muted" onClick={discardPending}>Descartar</button>
+          <div className="notice-actions">
+            <button type="button" className="link-button" onClick={chooseFiles}>Selecionar arquivos</button>
+            <button type="button" className="link-button muted" onClick={discardPending}>Descartar</button>
           </div>
         </section>
       )}
       {autoResumed > 0 && pendingCount === 0 && (
-        <p className="resume-notice" role="status">
+        <p className="notice" role="status">
           {autoResumed === 1 ? "Retomamos 1 envio que não tinha terminado." : `Retomamos ${autoResumed} envios que não tinham terminado.`}
         </p>
       )}
-      {selectionError && <p className="page-error" role="alert">{selectionError}</p>}
-      <UploadQueue entries={entries} onRetry={retry} onRemove={remove} onCancel={cancel} onClear={clearList} />
-      {allDone && <section className="success" aria-live="polite"><div className="check">✓</div><h2>Arquivos enviados!</h2><p>Obrigado por compartilhar<br />esse momento com a gente.</p><button className="primary-button" onClick={startOver}>Enviar mais fotos</button></section>}
+      {selectionError && <p className="notice notice-error" role="alert">{selectionError}</p>}
     </>
+  );
+
+  let content;
+  if (entries.length === 0) {
+    // Abertura: capa grande, mensagem e um único botão no alcance do polegar.
+    content = (
+      <>
+        <EventCover {...cover} />
+        <section className="panel welcome">
+          <p className="welcome-message">Cada convidado viu esse dia de um jeito. Compartilhe o seu.</p>
+          {notices}
+          <div className="welcome-actions">
+            <button className="primary-button" type="button" onClick={chooseFiles}>Enviar fotos e vídeos</button>
+            <p className="fine-print">Sem cadastro · fotos até 50 MB · vídeos até 5 GB</p>
+            <p className="fine-print drop-hint">ou arraste os arquivos para esta janela</p>
+          </div>
+        </section>
+      </>
+    );
+  } else if (allDone) {
+    content = (
+      <>
+        <EventCover {...cover} compact />
+        <section className="panel success" aria-live="polite">
+          <span className="success-check" aria-hidden="true">✓</span>
+          <h2>{entries.length === 1 ? "Seu arquivo foi enviado" : `Seus ${entries.length} arquivos foram enviados`}</h2>
+          <p>Obrigado por fazer parte de {event.name}.</p>
+          <button className="primary-button" type="button" onClick={() => { startOver(); chooseFiles(); }}>Enviar mais fotos e vídeos</button>
+        </section>
+      </>
+    );
+  } else {
+    content = (
+      <>
+        <EventCover {...cover} compact />
+        <section className="panel queue-panel">
+          {notices}
+          <UploadQueue entries={entries} onRetry={retry} onRemove={remove} onCancel={cancel} onClear={clearList} onAdd={chooseFiles} />
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <main className="event" onDrop={handleDrop} onDragOver={(dragEvent) => dragEvent.preventDefault()}>
+      {/* Fica montado em todos os estados: "Enviar mais" abre o seletor durante a troca de tela. */}
+      {input}
+      {content}
+    </main>
   );
 }

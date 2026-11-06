@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
+import { EventCover } from "@/components/EventCover";
 import { UploadArea } from "@/components/UploadArea";
+import { coverUrl, formatEventDate, type EventDisplay } from "@/lib/event-display";
 import { eventAvailability, findEventWithAccess } from "@/lib/events";
 
 export const dynamic = "force-dynamic";
@@ -12,10 +14,10 @@ type PageProps = {
 };
 
 const unavailableMessages = {
-  draft: ["Evento em preparação", "O envio de arquivos ainda não foi liberado."],
-  closed: ["Envios encerrados", "Este evento não está mais recebendo arquivos."],
-  not_started: ["Envios ainda não iniciados", "Volte a este link quando o período de envio começar."],
-  ended: ["Período de envio encerrado", "O prazo para compartilhar arquivos terminou."]
+  draft: ["Ainda estamos preparando tudo", "O envio de fotos e vídeos ainda não foi liberado. Volte mais perto do evento."],
+  closed: ["Os envios foram encerrados", "Este evento não está mais recebendo fotos e vídeos. Obrigado por fazer parte."],
+  not_started: ["Os envios abrem em breve", "Volte a este link no dia anterior ao evento para compartilhar o que registrar."],
+  ended: ["O prazo de envio terminou", "Este evento não está mais recebendo fotos e vídeos. Obrigado por fazer parte."]
 } as const;
 
 // generateMetadata e a página compartilham a mesma consulta por requisição.
@@ -40,22 +42,25 @@ export default async function EventPage(props: PageProps) {
   const { event, key } = await resolve(props);
   if (!event) notFound();
 
+  const display: EventDisplay = {
+    slug: event.slug,
+    accessKey: key,
+    name: event.name,
+    dateLabel: formatEventDate(event.eventDate),
+    coverUrl: coverUrl(event.slug, key, event.coverVersion),
+    maxFileSizeBytes: event.maxFileSizeBytes
+  };
   const availability = eventAvailability(event);
-  const message = availability === "available" ? null : unavailableMessages[availability];
 
+  if (availability === "available") return <UploadArea event={display} />;
+
+  const [title, text] = unavailableMessages[availability];
   return (
-    <main className="shell">
-      <section className="card">
-        <header className="hero">
-          <p className="eyebrow">{event.name}</p>
-          <h1>Compartilhe seus registros<br />deste momento</h1>
-          <p>Adicione aqui as fotos e vídeos que você registrou durante esse dia.</p>
-        </header>
-        {availability === "available" ? (
-          <UploadArea eventSlug={event.slug} eventKey={key} maxFileSizeBytes={event.maxFileSizeBytes} />
-        ) : (
-          <div className="invalid"><h2>{message?.[0]}</h2><p>{message?.[1]}</p></div>
-        )}
+    <main className="event">
+      <EventCover name={display.name} dateLabel={display.dateLabel} coverUrl={display.coverUrl} />
+      <section className="panel panel-message">
+        <h2>{title}</h2>
+        <p>{text}</p>
       </section>
     </main>
   );

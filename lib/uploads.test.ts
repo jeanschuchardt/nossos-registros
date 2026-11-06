@@ -31,7 +31,7 @@ async function createEvent(capacityBytes = 100): Promise<EventRecord> {
   const row = rows[0] as { id: string; access_token: string };
   return {
     id: row.id, slug, name: "Teste", status: "active", driveFolderId: `pasta-${slug}`, accessToken: row.access_token,
-    uploadStartsAt: null, uploadEndsAt: null, capacityBytes, maxFileSizeBytes: capacityBytes
+    eventDate: null, coverVersion: null, uploadStartsAt: null, uploadEndsAt: null, capacityBytes, maxFileSizeBytes: capacityBytes
   };
 }
 

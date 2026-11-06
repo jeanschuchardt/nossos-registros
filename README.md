@@ -107,6 +107,19 @@ Validar o OAuth e a pasta configurada para um evento:
 npm run check:google -- --slug casamento-ana-pedro
 ```
 
+## Capa do evento
+
+Cada evento pode ter uma foto de capa escolhida pelo contratante; sem ela, a página usa uma capa padrão neutra. A foto é redimensionada (até 1600 px), convertida para WebP e gravada sem metadados (inclusive localização GPS). Fica no Neon (`event_covers`) e só abre com o token do evento.
+
+```bash
+npm run db:set-cover -- --slug casamento-ana-pedro --image ~/Downloads/capa.jpg
+npm run db:set-cover -- --slug casamento-ana-pedro --remove   # volta para a capa padrão
+```
+
+O `create-event` também aceita `--cover foto.jpg`.
+
+Para ver os eventos ativos com link, prazo e uso: `npm run db:list-events` (ou `-- --all`).
+
 ## QR Code
 
 ```bash
